@@ -298,8 +298,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	// 4.
 	rf.log = append(rf.log, args.Entries...)
+	//DPrintf("%s %d(%d) append log %v", rf.state, rf.me, rf.currentTerm, rf.log)
 	//lastLog.Index += len(args.Entries)
 	// 5.
+	//DPrintf("%s %d(%d) args.LeaderCommit %d, rf.commitIndex %d", rf.state, rf.me, rf.currentTerm, args.LeaderCommit, rf.commitIndex)
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(args.LeaderCommit, rf.log[len(rf.log)-1].Index)
 	}
@@ -525,6 +527,7 @@ func (rf *Raft) heartBeat() {
 			if i == rf.me {
 				continue
 			}
+			DPrintf("rf.nextIndex %v", rf.nextIndex)
 			preLog := rf.log[rf.nextIndex[i]-1]
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -544,8 +547,8 @@ func (rf *Raft) heartBeat() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 				if reply.Success && args.Entries != nil {
-					rf.nextIndex[i] += args.Entries[len(args.Entries)-1].Index + 1
-					rf.matchIndex[i] = args.Entries[len(args.Entries)-1].Index + 1
+					rf.nextIndex[i] = args.Entries[len(args.Entries)-1].Index + 1
+					rf.matchIndex[i] = args.Entries[len(args.Entries)-1].Index
 				} else if !reply.Success {
 					if reply.Term > rf.currentTerm {
 						DPrintf("%s %d(%d) change to follower (%d) cause of stale3",
@@ -574,15 +577,18 @@ func (rf *Raft) watchingCommit() {
 			for i := range rf.matchIndex {
 				idxMap[rf.matchIndex[i]]++
 			}
+			//DPrintf("matchIndex %v", idxMap)
 			for idx, cnt := range idxMap {
 				if cnt > len(rf.peers)/2 && rf.log[idx].Term == rf.currentTerm {
-					DPrintf("%s %d(%d) increase commitIndex to %d", rf.state, rf.me, rf.currentTerm, idx)
+					if rf.commitIndex < idx {
+						DPrintf("%s %d(%d) increase commitIndex to %d", rf.state, rf.me, rf.currentTerm, idx)
+					}
 					rf.commitIndex = max(rf.commitIndex, idx)
 				}
 			}
 		}
 		rf.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -606,6 +612,7 @@ func (rf *Raft) applyLog() {
 			}
 			msg.Command = rf.log[startIdx+i].Command
 			msg.CommandIndex = startIdx + i
+			DPrintf("%s %d(%d) applying msg: %v", rf.state, rf.me, rf.currentTerm, msg)
 			rf.mu.Unlock()
 			rf.applyCh <- msg
 			rf.mu.Lock()
@@ -616,9 +623,12 @@ func (rf *Raft) applyLog() {
 }
 
 func (rf *Raft) isAlive() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	DPrintf("peer%d is alive", rf.me)
+	for rf.killed() == false {
+		rf.mu.Lock()
+		DPrintf("peer%d is alive", rf.me)
+		rf.mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // changeState 5 kinds of state change just like Figure 4
@@ -680,8 +690,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	// TODO
-	rf.commitIndex = 1
-	rf.lastAppend = 1
+	rf.commitIndex = 0
+	rf.lastAppend = 0
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
@@ -712,14 +722,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 //}
 
 func min(a, b int) int {
-	if a > b {
+	if a < b {
 		return a
 	}
 	return b
 }
 
 func max(a, b int) int {
-	if a < b {
+	if a > b {
 		return a
 	}
 	return b
