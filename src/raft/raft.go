@@ -90,7 +90,6 @@ type Raft struct {
 
 // Entry Log entry
 type Entry struct {
-	Index   int
 	Term    int
 	Command interface{}
 }
@@ -102,7 +101,6 @@ func (rf *Raft) GetState() (int, bool) {
 	//var term int
 	//var isleader bool
 	// Your code here (2A).
-	// TODO
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -166,7 +164,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	// TODO
 	Term         int
 	CandidateId  int
 	LastLogIndex int
@@ -177,7 +174,6 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (2A).
-	// TODO
 	Term        int
 	VoteGranted bool
 }
@@ -185,7 +181,6 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	// TODO
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer func() {
@@ -211,12 +206,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// 2.
 	lastLog := rf.log[len(rf.log)-1]
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) &&
-		(args.LastLogTerm > lastLog.Term || (args.LastLogTerm == lastLog.Term && args.LastLogIndex >= lastLog.Index)) {
+		(args.LastLogTerm > lastLog.Term || (args.LastLogTerm == lastLog.Term && args.LastLogIndex >= len(rf.log)-1)) {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
 	} else {
 		DPrintf("%s %d(%d) running RequestVote failed cause of voted or unmatched log %d(%d) != %d(%d)",
-			rf.state, rf.me, rf.currentTerm, lastLog.Index, lastLog.Term, args.LastLogIndex, args.LastLogTerm)
+			rf.state, rf.me, rf.currentTerm, len(rf.log)-1, lastLog.Term, args.LastLogIndex, args.LastLogTerm)
 		reply.VoteGranted = false
 	}
 	rf.lastHBTime = time.Now()
@@ -227,7 +222,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // field names must start with capital letters!
 type AppendEntriesArgs struct {
 	// Your data here (2A, 2B).
-	// TODO
 	Term         int
 	LeaderId     int
 	PrevLogIndex int
@@ -242,7 +236,6 @@ type AppendEntriesArgs struct {
 // field names must start with capital letters!
 type AppendEntriesReply struct {
 	// Your data here (2A).
-	// TODO
 	Term             int
 	Success          bool
 	ConflictingTerm  int
@@ -252,7 +245,6 @@ type AppendEntriesReply struct {
 // example AppendEntries RPC handler.
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
-	// TODO
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer func() {
@@ -267,10 +259,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	// 2. log has conflict
-	lastLog := rf.log[len(rf.log)-1]
-	if lastLog.Index < args.PrevLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if len(rf.log)-1 < args.PrevLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		// fast catch up
-		idx := lastLog.Index
+		idx := len(rf.log) - 1
 		for idx > 0 && rf.log[idx].Term == args.PrevLogTerm {
 			idx--
 		}
@@ -306,7 +297,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//	DPrintf("-------------------")
 	//	rf.log = rf.log[:args.Entries[0].Index]
 	//}
-	if lastLog.Index > args.PrevLogIndex {
+	if len(rf.log)-1 > args.PrevLogIndex {
 		rf.log = rf.log[:args.PrevLogIndex+1]
 	}
 
@@ -317,7 +308,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 5.
 	//DPrintf("%s %d(%d) args.LeaderCommit %d, rf.commitIndex %d", rf.state, rf.me, rf.currentTerm, args.LeaderCommit, rf.commitIndex)
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = min(args.LeaderCommit, rf.log[len(rf.log)-1].Index)
+		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
 	}
 
 	rf.lastHBTime = time.Now()
@@ -353,9 +344,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	//rf.mu.Lock()
-	//DPrintf("sending sendRequestVote from %d to %d", rf.me, server)
-	//rf.mu.Unlock()
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -384,16 +372,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 	rf.mu.Lock()
-	rf.mu.Unlock()
+	defer rf.mu.Unlock()
 
 	if rf.state != Leader {
 		return -1, -1, false
 	}
 
-	lastLog := rf.log[len(rf.log)-1]
 	entry := Entry{
 		Term:    rf.currentTerm,
-		Index:   lastLog.Index + 1,
 		Command: command,
 	}
 	DPrintf("%s %d(%d) append a log %v %v", rf.state, rf.me, rf.currentTerm, entry, entry.Command)
@@ -405,7 +391,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	DPrintf("%s %d(%d) matchIndex %v", rf.state, rf.me, rf.currentTerm, rf.matchIndex)
 	DPrintf("%s %d(%d) nextIndex %v", rf.state, rf.me, rf.currentTerm, rf.nextIndex)
 
-	return lastLog.Index + 1, rf.currentTerm, rf.state == Leader
+	return len(rf.log) - 1, rf.currentTerm, rf.state == Leader
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -438,11 +424,10 @@ func (rf *Raft) ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		// TODO
 		rf.mu.Lock()
 		// if time out
 
-		if rf.state != Leader && time.Since(rf.lastHBTime) > time.Millisecond*time.Duration(250+electionTimeOut) {
+		if rf.state != Leader && time.Since(rf.lastHBTime) > time.Millisecond*time.Duration(400+electionTimeOut) {
 			//DPrintf("if timeout.....")
 			cnt := 1
 			cntMu := sync.Mutex{}
@@ -463,7 +448,7 @@ func (rf *Raft) ticker() {
 			args := RequestVoteArgs{
 				Term:         rf.currentTerm,
 				CandidateId:  rf.me,
-				LastLogIndex: lastLog.Index,
+				LastLogIndex: len(rf.log) - 1,
 				LastLogTerm:  lastLog.Term,
 			}
 
@@ -514,7 +499,8 @@ func (rf *Raft) ticker() {
 				if cnt > n/2 {
 					DPrintf("%s %d(%d) become leader", rf.state, rf.me, rf.currentTerm)
 					rf.state = Leader
-					rf.nextIndex[rf.me] = rf.log[len(rf.log)-1].Index + 1
+					rf.nextIndex[rf.me] = len(rf.log)
+					rf.matchIndex[rf.me] = len(rf.log) - 1
 					go rf.heartBeat()
 					cntMu.Unlock()
 					rf.mu.Unlock()
@@ -547,21 +533,18 @@ func (rf *Raft) heartBeat() {
 			break
 		}
 
-		lastLog := rf.log[len(rf.log)-1]
-
 		for i := 0; i < n; i++ {
 			if i == rf.me {
 				continue
 			}
-			preLog := rf.log[rf.nextIndex[i]-1]
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
-				PrevLogIndex: preLog.Index,
-				PrevLogTerm:  preLog.Term,
+				PrevLogIndex: rf.matchIndex[i],
+				PrevLogTerm:  rf.log[rf.matchIndex[i]].Term, // TODO
 				LeaderCommit: rf.commitIndex,
 			}
-			if lastLog.Index >= rf.nextIndex[i] {
+			if len(rf.log)-1 >= rf.nextIndex[i] {
 				args.Entries = append([]Entry{}, rf.log[rf.nextIndex[i]:]...)
 			} else {
 				args.Entries = nil
@@ -572,8 +555,8 @@ func (rf *Raft) heartBeat() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 				if reply.Success && args.Entries != nil {
-					rf.nextIndex[i] = args.Entries[len(args.Entries)-1].Index + 1
-					rf.matchIndex[i] = args.Entries[len(args.Entries)-1].Index
+					rf.nextIndex[i] = args.PrevLogIndex + len(args.Entries) + 1
+					rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
 				} else if !reply.Success {
 					if reply.Term > rf.currentTerm {
 						DPrintf("%s %d(%d) change to follower (%d) cause of stale3",
@@ -597,7 +580,6 @@ func (rf *Raft) heartBeat() {
 
 func (rf *Raft) watchingCommit() {
 	for rf.killed() == false {
-		// if election timeout
 		rf.mu.Lock()
 		if rf.state == Leader {
 			idxMap := make(map[int]int)
@@ -608,20 +590,14 @@ func (rf *Raft) watchingCommit() {
 			DPrintf("nextIndex %v", rf.nextIndex)
 
 			for idx, cnt := range idxMap {
+				// TODO
 				if cnt > len(rf.peers)/2 && rf.log[idx].Term == rf.currentTerm && rf.commitIndex < idx {
 					DPrintf("%s %d(%d) increase commitIndex to %d", rf.state, rf.me, rf.currentTerm, idx)
 					rf.commitIndex = idx
 				}
 			}
 		}
-		rf.mu.Unlock()
-		time.Sleep(20 * time.Millisecond)
-	}
-}
 
-func (rf *Raft) applyLog() {
-	for rf.killed() == false {
-		rf.mu.Lock()
 		applyNum := rf.commitIndex - rf.lastAppend
 		if applyNum == 0 {
 			rf.mu.Unlock()
@@ -639,20 +615,30 @@ func (rf *Raft) applyLog() {
 			}
 			msg.Command = rf.log[startIdx+i].Command
 			msg.CommandIndex = startIdx + i
-			DPrintf("%s %d(%d) applying msg: %v", rf.state, rf.me, rf.currentTerm, msg)
+			DPrintf("%s %d(%d) apply log %v", rf.state, rf.me, rf.currentTerm, msg)
 			rf.mu.Unlock()
 			rf.applyCh <- msg
 			rf.mu.Lock()
 		}
 		rf.lastAppend = rf.commitIndex
 		rf.mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+//func (rf *Raft) applyLog() {
+//	for rf.killed() == false {
+//		rf.mu.Lock()
+//
+//		rf.mu.Unlock()
+//	}
+//}
 
 func (rf *Raft) isAlive() {
 	for rf.killed() == false {
 		rf.mu.Lock()
 		DPrintf("peer%d is alive, log %v", rf.me, rf.log)
+		//DPrintf("peer%d is alive,", rf.me)
 		rf.mu.Unlock()
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -716,7 +702,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.startTime = time.Now()
 
 	// Your initialization code here (2A, 2B, 2C).
-	// TODO
 	rf.commitIndex = 0
 	rf.lastAppend = 0
 	rf.nextIndex = make([]int, len(rf.peers))
@@ -726,7 +711,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.matchIndex[i] = 0
 	}
 
-	rf.log = append(rf.log, Entry{Term: 0, Index: 0})
+	rf.log = append(rf.log, Entry{Term: 0})
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -734,19 +719,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.watchingCommit()
-	go rf.applyLog()
+	//go rf.applyLog()
 	go rf.isAlive()
 
 	return rf
 }
-
-//func (rf *Raft) updateLog()  {
-//	for {
-//		rf.mu.Lock()
-//
-//		rf.mu.Unlock()
-//	}
-//}
 
 func min(a, b int) int {
 	if a < b {
