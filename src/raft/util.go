@@ -6,6 +6,7 @@ import "log"
 const Debug = true
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
+	log.SetFlags(log.Ldate | log.Lmicroseconds)
 	if Debug {
 		log.Printf(format, a...)
 	}
